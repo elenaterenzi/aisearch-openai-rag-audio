@@ -20,7 +20,9 @@ function App() {
     const [groundingFiles, setGroundingFiles] = useState<GroundingFile[]>([]);
     const [selectedFile, setSelectedFile] = useState<GroundingFile | null>(null);
 
+// ...existing code...
     const { startSession, addUserAudio, inputAudioBufferClear } = useRealTime({
+        enableInputAudioTranscription: true, // Add this line
         onWebSocketOpen: () => console.log("WebSocket connection opened"),
         onWebSocketClose: () => console.log("WebSocket connection closed"),
         onWebSocketError: event => console.error("WebSocket error:", event),
@@ -30,6 +32,15 @@ function App() {
         },
         onReceivedInputAudioBufferSpeechStarted: () => {
             stopAudioPlayer();
+        },
+        // Add this new callback to log user audio transcriptions
+        onReceivedInputAudioTranscriptionCompleted: message => {
+            console.log("!!TX!! User audio transcribed: ", message.transcript);
+            // You can also log to server by sending to backend if needed
+        },
+        // Add this callback to log AI response transcriptions
+        onReceivedResponseAudioTranscriptDelta: message => {
+            console.log("!!TX!! AI response transcript delta: ", message.delta);
         },
         onReceivedExtensionMiddleTierToolResponse: message => {
             const result: ToolResult = JSON.parse(message.tool_result);
@@ -41,6 +52,7 @@ function App() {
             setGroundingFiles(prev => [...prev, ...files]);
         }
     });
+// ...existing code...
 
     const { reset: resetAudioPlayer, play: playAudio, stop: stopAudioPlayer } = useAudioPlayer();
     const { start: startAudioRecording, stop: stopAudioRecording } = useAudioRecorder({ onAudioRecorded: addUserAudio });

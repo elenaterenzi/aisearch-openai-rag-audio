@@ -7,7 +7,7 @@ from typing import Any, Callable, Optional
 import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider, EnvironmentCredential
 
 logger = logging.getLogger("voicerag")
 
@@ -49,6 +49,10 @@ class RTMiddleTier:
     deployment: str
     key: Optional[str] = None
     
+    # Voice Live specific properties
+    is_voice_live: bool = False
+    voice_live_region: Optional[str] = None
+    
     # Tools are server-side only for now, though the case could be made for client-side tools
     # in addition to server-side tools that are invisible to the client
     tools: dict[str, Tool] = {}
@@ -65,10 +69,17 @@ class RTMiddleTier:
     _tools_pending = {}
     _token_provider = None
 
-    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: Optional[str] = None):
+    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: Optional[str] = None, use_voice_live: bool = False):
         self.endpoint = endpoint
         self.deployment = deployment
         self.voice_choice = voice_choice
+        self.is_voice_live = use_voice_live
+        
+        # Extract region from endpoint for Voice Live
+        # According to the official docs, extracting the region from the endpoint is not required for Voice Live.
+        # The region is not needed for authentication or connection.
+        # See: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live-quickstart
+            
         if voice_choice is not None:
             logger.info("Realtime voice choice set to %s", voice_choice)
         if isinstance(credentials, AzureKeyCredential):
@@ -92,6 +103,20 @@ class RTMiddleTier:
                     session["tool_choice"] = "none"
                     session["max_response_output_tokens"] = None
                     updated_message = json.dumps(message)
+
+                # Add this new case for user audio transcription
+                case "conversation.item.input_audio_transcription.completed":
+                    if "transcript" in message:
+                        logger.info("!!!TX!!! User audio transcribed: %s", message["transcript"])
+                    # Let this message pass through to the client
+                    updated_message = msg.data
+
+                # Add this new case for AI response transcription
+                case "response.audio_transcript.delta":
+                    #if "delta" in message:
+                    #    logger.info("!!!TX!!! AI response transcript delta: %s", message["delta"])
+                    # Let this message pass through to the client
+                    updated_message = msg.data
 
                 case "response.output_item.added":
                     if "item" in message and message["item"]["type"] == "function_call":
@@ -172,6 +197,58 @@ class RTMiddleTier:
                         session["disable_audio"] = self.disable_audio
                     if self.voice_choice is not None:
                         session["voice"] = self.voice_choice
+                    
+                    # Configure Voice Live specific settings
+                    if self.is_voice_live:
+                        # OLD
+                        # Voice Live session configuration based on actual API
+                        # session["turn_detection"] = {
+                        #     "type": "server_vad",
+                        #     "threshold": 0.5,
+                        #     "prefix_padding_ms": 300,
+                        #     "silence_duration_ms": 500
+                        # }
+                        #NEW
+                        use_semantic_vad = not(self.deployment.startswith("gpt-4o") or self.deployment.endswith("--realtime-preview"))
+                        if use_semantic_vad:
+                            session["turn_detection"] = {
+                                "type": "azure_semantic_vad",
+                                "threshold": 0.3,
+                                "prefix_padding_ms": 200,
+                                "silence_duration_ms": 200,
+                                "remove_filler_words": False,
+                                "end_of_utterance_detection": {
+                                    "model": "semantic_detection_v1",
+                                    "threshold": 0.01,
+                                    "timeout": 2,
+                                },
+                            }
+                        else:
+                            session["turn_detection"] = {
+                                "type": "server_vad",
+                                "threshold": 0.3,
+                                "prefix_padding_ms": 200,
+                                "silence_duration_ms": 200,
+                                "remove_filler_words": False,
+                            }
+                        # Audio noise reduction
+                        session["input_audio_noise_reduction"] = {
+                            "type": "azure_deep_noise_suppression"
+                        }
+                        # Echo cancellation
+                        session["input_audio_echo_cancellation"] = {
+                            "type": "server_echo_cancellation"
+                        }
+                        # END NEW
+                        # OLD but kept
+                        # Voice Live specific configuration
+                        session["input_audio_format"] = "pcm16"
+                        session["output_audio_format"] = "pcm16"
+                        session["input_audio_transcription"] = {
+                            "model": "whisper-1"
+                        }
+                        # end of OLD
+                    
                     session["tool_choice"] = "auto" if len(self.tools) > 0 else "none"
                     session["tools"] = [tool.schema for tool in self.tools.values()]
                     updated_message = json.dumps(message)
@@ -179,44 +256,87 @@ class RTMiddleTier:
         return updated_message
 
     async def _forward_messages(self, ws: web.WebSocketResponse):
-        async with aiohttp.ClientSession(base_url=self.endpoint) as session:
-            params = { "api-version": self.api_version, "deployment": self.deployment}
+        if self.is_voice_live:
+            # Voice Live requires direct WebSocket connection with full URL
+            # Convert https:// to wss:// for WebSocket
+            ws_endpoint = self.endpoint.replace("https://", "wss://").rstrip("/")
+            params = { 
+                "api-version": "2025-05-01-preview",
+                "model": self.deployment or "gpt-4o"
+            }
+            ws_path = "/voice-live/realtime"
+            
+            # # Build complete WebSocket URL for Voice Live
+            # param_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            # full_ws_url = f"{ws_endpoint}{ws_path}?{param_string}"
+            logger.info("Connecting to Voice Live WebSocket at %s", ws_endpoint + ws_path)
+            
             headers = {}
+            # Always set x-ms-client-request-id in headers, generate one if not present
             if "x-ms-client-request-id" in ws.headers:
                 headers["x-ms-client-request-id"] = ws.headers["x-ms-client-request-id"]
-            if self.key is not None:
-                headers = { "api-key": self.key }
             else:
-                headers = { "Authorization": f"Bearer {self._token_provider()}" } # NOTE: no async version of token provider, maybe refresh token on a timer?
-            async with session.ws_connect("/openai/realtime", headers=headers, params=params) as target_ws:
-                async def from_client_to_server():
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            new_msg = await self._process_message_to_server(msg, ws)
-                            if new_msg is not None:
-                                await target_ws.send_str(new_msg)
-                        else:
-                            print("Error: unexpected message type:", msg.type)
+                import uuid
+                headers["x-ms-client-request-id"] = str(uuid.uuid4())
+            if self.key is not None:
+                headers["api-key"] = self.key
+                logger.info("Using API key for Voice Live WebSocket connection")
+            else:
+                logger.info("Using Bearer token for Voice Live WebSocket connection")
+                headers["Authorization"] = f"Bearer {self._token_provider()}"
+            
+            # logger.info("Headers for Voice Live WebSocket connection: %s", headers)
+            # Direct WebSocket connection for Voice Live
+            import aiohttp
+            async with aiohttp.ClientSession(base_url=ws_endpoint) as session:
+                async with session.ws_connect(ws_path, headers=headers, params=params) as target_ws:
+                    await self._handle_websocket_communication(ws, target_ws)
+            
+        else:
+            # Original OpenAI Realtime API (uses base_url + relative path)
+            async with aiohttp.ClientSession(base_url=self.endpoint) as session:
+                params = { "api-version": self.api_version, "deployment": self.deployment}
+                ws_path = "/openai/realtime"
                     
-                    # Means it is gracefully closed by the client then time to close the target_ws
-                    if target_ws:
-                        print("Closing OpenAI's realtime socket connection.")
-                        await target_ws.close()
-                        
-                async def from_server_to_client():
-                    async for msg in target_ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            new_msg = await self._process_message_to_client(msg, ws, target_ws)
-                            if new_msg is not None:
-                                await ws.send_str(new_msg)
-                        else:
-                            print("Error: unexpected message type:", msg.type)
+                headers = {}
+                if "x-ms-client-request-id" in ws.headers:
+                    headers["x-ms-client-request-id"] = ws.headers["x-ms-client-request-id"]
+                if self.key is not None:
+                    headers = { "api-key": self.key }
+                else:
+                    headers = { "Authorization": f"Bearer {self._token_provider()}" }
+                async with session.ws_connect(ws_path, headers=headers, params=params) as target_ws:
+                    await self._handle_websocket_communication(ws, target_ws)
 
-                try:
-                    await asyncio.gather(from_client_to_server(), from_server_to_client())
-                except ConnectionResetError:
-                    # Ignore the errors resulting from the client disconnecting the socket
-                    pass
+    async def _handle_websocket_communication(self, ws: web.WebSocketResponse, target_ws):
+        async def from_client_to_server():
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    new_msg = await self._process_message_to_server(msg, ws)
+                    if new_msg is not None:
+                        await target_ws.send_str(new_msg)
+                else:
+                    print("Error: unexpected message type:", msg.type)
+            
+            # Means it is gracefully closed by the client then time to close the target_ws
+            if target_ws:
+                print("Closing realtime socket connection.")
+                await target_ws.close()
+                
+        async def from_server_to_client():
+            async for msg in target_ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    new_msg = await self._process_message_to_client(msg, ws, target_ws)
+                    if new_msg is not None:
+                        await ws.send_str(new_msg)
+                else:
+                    print("Error: unexpected message type:", msg.type)
+
+        try:
+            await asyncio.gather(from_client_to_server(), from_server_to_client())
+        except ConnectionResetError:
+            # Ignore the errors resulting from the client disconnecting the socket
+            pass
 
     async def _websocket_handler(self, request: web.Request):
         ws = web.WebSocketResponse()
