@@ -20,6 +20,9 @@ async def create_app():
 
     llm_key = os.environ.get("AZURE_OPENAI_API_KEY")
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
+    speech_key = os.environ.get("AZURE_AI_FOUNDRY_API_KEY")
+
+    logger.info("!!!---!!! Using speech key" if speech_key else "!!!---!!! No speech key provided")
 
     credential = None
     if not llm_key or not search_key:
@@ -31,14 +34,29 @@ async def create_app():
             credential = DefaultAzureCredential()
     llm_credential = AzureKeyCredential(llm_key) if llm_key else credential
     search_credential = AzureKeyCredential(search_key) if search_key else credential
+    speech_credential = AzureKeyCredential(speech_key) if speech_key else credential
     
     app = web.Application()
 
-    rtmt = RTMiddleTier(
-        credentials=llm_credential,
-        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        deployment=os.environ["AZURE_OPENAI_REALTIME_DEPLOYMENT"],
-        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy"
+    # Check if Voice Live should be used
+    use_voice_live = os.environ.get("USE_VOICE_LIVE", "false").lower() == "true"
+    
+    if use_voice_live:
+        logger.info("Using Voice Live API with AI Foundry endpoint: %s", os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT"))
+        rtmt = RTMiddleTier(
+            credentials=speech_credential,
+            endpoint=os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT"),
+            deployment=os.environ["AZURE_SPEECH_DEPLOYMENT"] or "gpt-4o",  # Voice Live uses auto-deployed models
+            # voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy",
+            use_voice_live=True
+        )
+    else:
+        logger.info("Using OpenAI Realtime API")
+        rtmt = RTMiddleTier(
+            credentials=llm_credential,
+            endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            deployment=os.environ["AZURE_OPENAI_REALTIME_DEPLOYMENT"],
+            voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy"
         )
     rtmt.system_message = """
         You are a helpful assistant. Only answer questions based on information you searched in the knowledge base, accessible with the 'search' tool. 
