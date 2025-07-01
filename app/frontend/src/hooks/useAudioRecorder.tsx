@@ -38,10 +38,17 @@ export default function useAudioRecorder({ onAudioRecorded }: Parameters) {
         if (!audioRecorder.current) {
             audioRecorder.current = new Recorder(handleAudioData);
         }
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: 24000
+        } 
+         });
         audioRecorder.current.start(stream);
     };
-
+    
     const stop = async () => {
         await audioRecorder.current?.stop();
     };

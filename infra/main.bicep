@@ -19,6 +19,7 @@ param environmentName string
   'westcentralus'
   'northeurope'
   'francecentral'
+  'swedencentral'
   'switzerlandnorth'
   'switzerlandwest'
   'uksouth'
@@ -91,6 +92,31 @@ param realtimeDeploymentCapacity int
 param realtimeDeploymentVersion string
 param embeddingDeploymentCapacity int
 
+@description('Enable Voice Live API instead of OpenAI Realtime')
+@allowed([true, false])
+param useVoiceLive bool
+
+@description('AI Foundry resource location for Voice Live (must support realtime)')
+@allowed([
+  'eastus2'
+  'swedencentral'
+])
+@metadata({
+  azd: {
+    type: 'location'
+  }
+})
+param aiFoundryLocation string
+
+@description('Speech Deployment model for Voice Live')
+@allowed(['gpt-4o', 'gpt-4o-mini', 'gpt-4o-realtime-preview', 'gpt-4o-mini-realtime-preview','phi4-mm-realtime','phi4-mini'])
+param speechDeploymentModel string
+
+param aiFoundryName string = ''
+param aiFoundryResourceGroupName string = ''
+param reuseExistingAiFoundry bool = false
+param aiFoundryEndpoint string = ''
+
 param tenantId string = tenant().tenantId
 
 @description('Id of the user or app to assign application roles')
@@ -135,6 +161,10 @@ resource searchServiceResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-
 
 resource storageResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(storageResourceGroupName)) {
   name: !empty(storageResourceGroupName) ? storageResourceGroupName : resourceGroup.name
+}
+
+resource aiFoundryResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(aiFoundryResourceGroupName)) {
+  name: !empty(aiFoundryResourceGroupName) ? aiFoundryResourceGroupName : resourceGroup.name
 }
 
 module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.7.0' = {
@@ -213,6 +243,11 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       AZURE_OPENAI_ENDPOINT: reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : openAiDeployments[0].name
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Voice Live configuration
+      USE_VOICE_LIVE: useVoiceLive
+      AZURE_AI_FOUNDRY_ENDPOINT: useVoiceLive ? aiFoundryServiceEndpoint : ''
+      AZURE_SPEECH_DEPLOYMENT: useVoiceLive ? speechDeploymentModel : ''
+      AZURE_AI_FOUNDRY_API_KEY: useVoiceLive ? aiFoundry.outputs.primaryKey : ''
       // CORS support, for frontends on other hosts
       RUNNING_IN_PRODUCTION: 'true'
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
@@ -351,6 +386,52 @@ module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
   }
 }
 
+var aiFoundryServiceEndpoint = reuseExistingAiFoundry ? aiFoundryEndpoint : 'https://${aiFoundry.outputs.name}.services.ai.azure.com/'
+// AI Foundry resource for Voice Live
+// module aiFoundry 'br/public:avm/res/cognitive-services/account:0.9.0' = if (!reuseExistingAiFoundry && useVoiceLive) {
+//   name: 'ai-foundry'
+//   scope: aiFoundryResourceGroup
+//   params: {
+//     name: !empty(aiFoundryName) ? aiFoundryName : '${abbrs.cognitiveServicesAccounts}aifoundry-${resourceToken}'
+//     location: aiFoundryLocation
+//     tags: tags
+//     kind: 'AIServices'
+//     sku: 'S0'
+//     managedIdentities: {
+//       systemAssigned: true
+//     }
+//     publicNetworkAccess: 'Enabled'
+//     networkAcls: {
+//       defaultAction: 'Allow'
+//     }
+//     disableLocalAuth: false // enable API key authentication
+//     roleAssignments: [
+//       {
+//         roleDefinitionIdOrName: 'Cognitive Services User'
+//         principalId: principalId
+//         principalType: principalType
+//       }
+//     ]
+//   }
+// }
+
+
+// AI Foundry resource for Voice Live
+module aiFoundry 'core/host/ai-foundry.bicep' = if (!reuseExistingAiFoundry && useVoiceLive) {
+  name: 'ai-foundry'
+  scope: aiFoundryResourceGroup
+  params: {
+    name: !empty(aiFoundryName) ? aiFoundryName : '${abbrs.cognitiveServicesAccounts}aifoundry-${resourceToken}'
+    location: aiFoundryLocation
+    tags: tags
+    sku: 'S0'
+    enableApiKeyAuth: true
+    principalId: principalId
+    principalType: principalType
+    createRoleAssignment: true
+  }
+}
+
 // Roles for the backend to access other services
 module openAiRoleBackend 'core/security/role.bicep' = {
   scope: openAiResourceGroup
@@ -396,17 +477,34 @@ module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSe
   }
 }
 
+// Role assignment for container app to access AI Foundry (Voice Live)
+module aiFoundryRoleAssignment 'core/security/role.bicep' = if (useVoiceLive) {
+  scope: aiFoundryResourceGroup
+  name: 'ai-foundry-role-containerapp'
+  params: {
+    principalId: acaIdentity.outputs.principalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenantId
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
+output RESOURCE_GROUP_ID string = resourceGroup.id
 
 output AZURE_OPENAI_ENDPOINT string = reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
-output AZURE_OPENAI_REALTIME_DEPLOYMENT string = reuseExistingOpenAi
+output AZURE_OPENAI_REALTIME_DEPLOYMENT string = reuseExistingOpenAi 
   ? openAiRealtimeDeployment
   : openAiDeployments[0].name
 output AZURE_OPENAI_REALTIME_VOICE_CHOICE string = openAiRealtimeVoiceChoice
 output AZURE_OPENAI_EMBEDDING_DEPLOYMENT string = embedModel
 output AZURE_OPENAI_EMBEDDING_MODEL string = embedModel
+
+// Voice Live outputs
+output USE_VOICE_LIVE bool = useVoiceLive
+output AZURE_AI_FOUNDRY_ENDPOINT string = useVoiceLive ? aiFoundryServiceEndpoint : ''
+output AZURE_SPEECH_DEPLOYMENT string = speechDeploymentModel
 
 output AZURE_SEARCH_ENDPOINT string = reuseExistingSearch
   ? searchEndpoint
@@ -419,7 +517,7 @@ output AZURE_SEARCH_TITLE_FIELD string = searchTitleField
 output AZURE_SEARCH_EMBEDDING_FIELD string = searchEmbeddingField
 output AZURE_SEARCH_USE_VECTOR_QUERY bool = searchUseVectorQuery
 
-output AZURE_STORAGE_ENDPOINT string = 'https://${storage.outputs.name}.blob.core.windows.net'
+output AZURE_STORAGE_ENDPOINT string = storage.outputs.primaryBlobEndpoint
 output AZURE_STORAGE_ACCOUNT string = storage.outputs.name
 output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${subscription().subscriptionId}/resourceGroups/${storageResourceGroup.name}/providers/Microsoft.Storage/storageAccounts/${storage.outputs.name}'
 output AZURE_STORAGE_CONTAINER string = storageContainerName
