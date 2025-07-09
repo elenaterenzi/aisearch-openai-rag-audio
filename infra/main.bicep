@@ -152,19 +152,21 @@ resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
 }
 
 resource openAiResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(openAiResourceGroupName)) {
-  name: !empty(openAiResourceGroupName) ? openAiResourceGroupName : resourceGroup.name
+  name: openAiResourceGroupName
 }
 
 resource searchServiceResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(searchServiceResourceGroupName)) {
-  name: !empty(searchServiceResourceGroupName) ? searchServiceResourceGroupName : resourceGroup.name
+  name: searchServiceResourceGroupName
 }
 
 resource storageResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(storageResourceGroupName)) {
-  name: !empty(storageResourceGroupName) ? storageResourceGroupName : resourceGroup.name
+  name: storageResourceGroupName 
 }
 
+var storageRGName = !empty(storageResourceGroupName) ? storageResourceGroupName : resourceGroup.name
+
 resource aiFoundryResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(aiFoundryResourceGroupName)) {
-  name: !empty(aiFoundryResourceGroupName) ? aiFoundryResourceGroupName : resourceGroup.name
+  name: aiFoundryResourceGroupName
 }
 
 module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.7.0' = {
@@ -286,7 +288,7 @@ var openAiDeployments = [
 
 module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseExistingOpenAi) {
   name: 'openai'
-  scope: openAiResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(openAiServiceName) ? openAiServiceName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
     location: openAiServiceLocation
@@ -310,9 +312,10 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseE
   }
 }
 
+
 module searchService 'br/public:avm/res/search/search-service:0.7.1' = if (!reuseExistingSearch) {
   name: 'search-service'
-  scope: searchServiceResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(searchServiceName) ? searchServiceName : 'gptkb-${resourceToken}'
     location: !empty(searchServiceLocation) ? searchServiceLocation : location
@@ -346,7 +349,7 @@ module searchService 'br/public:avm/res/search/search-service:0.7.1' = if (!reus
 
 module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
   name: 'storage'
-  scope: storageResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(storageAccountName) ? storageAccountName : '${abbrs.storageStorageAccounts}${resourceToken}'
     location: storageResourceGroupLocation
@@ -419,7 +422,7 @@ var aiFoundryServiceEndpoint = reuseExistingAiFoundry ? aiFoundryEndpoint : 'htt
 // AI Foundry resource for Voice Live
 module aiFoundry 'core/host/ai-foundry.bicep' = if (!reuseExistingAiFoundry && useVoiceLive) {
   name: 'ai-foundry'
-  scope: aiFoundryResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(aiFoundryName) ? aiFoundryName : '${abbrs.cognitiveServicesAccounts}aifoundry-${resourceToken}'
     location: aiFoundryLocation
@@ -433,8 +436,17 @@ module aiFoundry 'core/host/ai-foundry.bicep' = if (!reuseExistingAiFoundry && u
 }
 
 // Roles for the backend to access other services
-module openAiRoleBackend 'core/security/role.bicep' = {
+module openAiRoleBackendExisting 'core/security/role.bicep' = if (reuseExistingOpenAi) {
   scope: openAiResourceGroup
+  name: 'openai-role-backend-existing'
+  params: {
+    principalId: acaBackend.outputs.identityPrincipalId
+    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+    principalType: 'ServicePrincipal'
+  }
+}
+module openAiRoleBackend 'core/security/role.bicep' = if (!reuseExistingOpenAi) {
+  scope: resourceGroup
   name: 'openai-role-backend'
   params: {
     principalId: acaBackend.outputs.identityPrincipalId
@@ -445,8 +457,17 @@ module openAiRoleBackend 'core/security/role.bicep' = {
 
 // Used to issue search queries
 // https://learn.microsoft.com/azure/search/search-security-rbac
-module searchRoleBackend 'core/security/role.bicep' = {
+module searchRoleBackendExisting 'core/security/role.bicep' = if (reuseExistingSearch) {
   scope: searchServiceResourceGroup
+  name: 'search-role-backend-existing'
+  params: {
+    principalId: acaBackend.outputs.identityPrincipalId
+    roleDefinitionId: '1407120a-92aa-4202-b7e9-c0e197c71c8f'
+    principalType: 'ServicePrincipal'
+  }
+}
+module searchRoleBackend 'core/security/role.bicep' = if (!reuseExistingSearch) {
+  scope: resourceGroup
   name: 'search-role-backend'
   params: {
     principalId: acaBackend.outputs.identityPrincipalId
@@ -454,10 +475,18 @@ module searchRoleBackend 'core/security/role.bicep' = {
     principalType: 'ServicePrincipal'
   }
 }
-
 // Necessary for integrated vectorization, for search service to access storage
-module storageRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
+module storageRoleSearchServiceExisting 'core/security/role.bicep' = if (!empty(storageResourceGroupName)) {
   scope: storageResourceGroup
+  name: 'storage-role-searchservice-existing'
+  params: {
+    principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
+    roleDefinitionId: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
+    principalType: 'ServicePrincipal'
+  }
+}
+module storageRoleSearchService 'core/security/role.bicep' = if (empty(storageResourceGroupName)) {
+  scope: resourceGroup
   name: 'storage-role-searchservice'
   params: {
     principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
@@ -467,8 +496,18 @@ module storageRoleSearchService 'core/security/role.bicep' = if (!reuseExistingS
 }
 
 // Necessary for integrated vectorization, for search service to access OpenAI embeddings
-module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
+module openAiRoleSearchServiceExisting 'core/security/role.bicep' = if (reuseExistingSearch) {
   scope: openAiResourceGroup
+  name: 'openai-role-searchservice-existing'
+  params: {
+    principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
+    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+    principalType: 'ServicePrincipal'
+  }
+}
+
+module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
+  scope: resourceGroup
   name: 'openai-role-searchservice'
   params: {
     principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
@@ -478,8 +517,17 @@ module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSe
 }
 
 // Role assignment for container app to access AI Foundry (Voice Live)
-module aiFoundryRoleAssignment 'core/security/role.bicep' = if (useVoiceLive) {
+module aiFoundryRoleAssignmentExisting 'core/security/role.bicep' = if (useVoiceLive && reuseExistingAiFoundry) {
   scope: aiFoundryResourceGroup
+  name: 'ai-foundry-role-containerapp-existing'
+  params: {
+    principalId: acaIdentity.outputs.principalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
+    principalType: 'ServicePrincipal'
+  }
+}
+module aiFoundryRoleAssignment 'core/security/role.bicep' = if (useVoiceLive && !reuseExistingAiFoundry) {
+  scope: resourceGroup
   name: 'ai-foundry-role-containerapp'
   params: {
     principalId: acaIdentity.outputs.principalId
@@ -519,9 +567,9 @@ output AZURE_SEARCH_USE_VECTOR_QUERY bool = searchUseVectorQuery
 
 output AZURE_STORAGE_ENDPOINT string = storage.outputs.primaryBlobEndpoint
 output AZURE_STORAGE_ACCOUNT string = storage.outputs.name
-output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${subscription().subscriptionId}/resourceGroups/${storageResourceGroup.name}/providers/Microsoft.Storage/storageAccounts/${storage.outputs.name}'
+output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${subscription().subscriptionId}/resourceGroups/${storageRGName}/providers/Microsoft.Storage/storageAccounts/${storage.outputs.name}'
 output AZURE_STORAGE_CONTAINER string = storageContainerName
-output AZURE_STORAGE_RESOURCE_GROUP string = storageResourceGroup.name
+output AZURE_STORAGE_RESOURCE_GROUP string = storageRGName
 
 output BACKEND_URI string = acaBackend.outputs.uri
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerApps.outputs.registryLoginServer

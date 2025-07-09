@@ -209,7 +209,7 @@ class RTMiddleTier:
                         #     "silence_duration_ms": 500
                         # }
                         #NEW
-                        use_semantic_vad = not(self.deployment.startswith("gpt-4o") or self.deployment.endswith("--realtime-preview"))
+                        use_semantic_vad = not(self.deployment.endswith("realtime-preview"))
                         if use_semantic_vad:
                             session["turn_detection"] = {
                                 "type": "azure_semantic_vad",
