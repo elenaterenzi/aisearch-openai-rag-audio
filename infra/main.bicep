@@ -87,6 +87,10 @@ param openAiRealtimeVoiceChoice string = ''
 })
 param openAiServiceLocation string
 
+@description('Are you authenticated as a user or Service Principal?')
+@allowed(['User', 'ServicePrincipal'])
+param principalType string
+
 param realtimeDeploymentCapacity int
 param realtimeDeploymentVersion string
 param embeddingDeploymentCapacity int
@@ -100,11 +104,11 @@ var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
-@description('Whether the deployment is running on GitHub Actions')
-param runningOnGh string = ''
+// @description('Whether the deployment is running on GitHub Actions')
+// param runningOnGh string = ''
 
-@description('Whether the deployment is running on Azure DevOps Pipeline')
-param runningOnAdo string = ''
+// @description('Whether the deployment is running on Azure DevOps Pipeline')
+// param runningOnAdo string = ''
 
 @description('Used by azd for containerapps deployment')
 param webAppExists bool
@@ -115,8 +119,8 @@ param azureContainerAppsWorkloadProfile string
 param acaIdentityName string = '${environmentName}-aca-identity'
 param containerRegistryName string = '${replace(environmentName, '-', '')}acr'
 
-// Figure out if we're running as a user or service principal
-var principalType = empty(runningOnGh) && empty(runningOnAdo) ? 'User' : 'ServicePrincipal'
+// // Figure out if we're running as a user or service principal
+// var principalType = empty(runningOnGh) && empty(runningOnAdo) ? 'User' : 'ServicePrincipal'
 
 // Organize resources in a resource group
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
@@ -175,6 +179,7 @@ module containerApps 'core/host/container-apps.bicep' = {
     containerAppsEnvironmentName: '${environmentName}-aca-env'
     containerRegistryName: '${containerRegistryName}${resourceToken}'
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
+    containerRegistryResourceGroupName: resourceGroup.name
   }
 }
 
