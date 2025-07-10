@@ -5,7 +5,7 @@ param tags object = {}
 
 param containerAppsEnvironmentName string
 param containerRegistryName string
-param containerRegistryResourceGroupName string = ''
+param containerRegistryResourceGroupName string
 param containerRegistryAdminUserEnabled bool = false
 param logAnalyticsWorkspaceResourceId string
 param virtualNetworkSubnetId string = ''
@@ -60,9 +60,7 @@ module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.5.2
 
 module containerRegistry 'br/public:avm/res/container-registry/registry:0.3.1' = {
   name: '${name}-container-registry'
-  scope: !empty(containerRegistryResourceGroupName)
-    ? resourceGroup(containerRegistryResourceGroupName)
-    : resourceGroup()
+  scope: resourceGroup(containerRegistryResourceGroupName)
   params: {
     name: containerRegistryName
     location: location

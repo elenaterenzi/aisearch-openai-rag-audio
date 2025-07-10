@@ -175,6 +175,7 @@ module containerApps 'core/host/container-apps.bicep' = {
     containerAppsEnvironmentName: '${environmentName}-aca-env'
     containerRegistryName: '${containerRegistryName}${resourceToken}'
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
+    containerRegistryResourceGroupName: resourceGroup.name
   }
 }
 
