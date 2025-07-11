@@ -19,6 +19,7 @@ param environmentName string
   'westcentralus'
   'northeurope'
   'francecentral'
+  'swedencentral'
   'switzerlandnorth'
   'switzerlandwest'
   'uksouth'
