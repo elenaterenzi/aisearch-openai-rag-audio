@@ -20,7 +20,7 @@ function App() {
     const [groundingFiles, setGroundingFiles] = useState<GroundingFile[]>([]);
     const [selectedFile, setSelectedFile] = useState<GroundingFile | null>(null);
 
-// ...existing code...
+    // ...existing code...
     const { startSession, addUserAudio, inputAudioBufferClear } = useRealTime({
         enableInputAudioTranscription: true, // Add this line
         onWebSocketOpen: () => console.log("WebSocket connection opened"),
@@ -52,7 +52,7 @@ function App() {
             setGroundingFiles(prev => [...prev, ...files]);
         }
     });
-// ...existing code...
+    // ...existing code...
 
     const { reset: resetAudioPlayer, play: playAudio, stop: stopAudioPlayer } = useAudioPlayer();
     const { start: startAudioRecording, stop: stopAudioRecording } = useAudioRecorder({ onAudioRecorded: addUserAudio });
@@ -75,10 +75,16 @@ function App() {
 
     const { t } = useTranslation();
 
+    // Get the API type from environment variable
+    const useVoiceLive = import.meta.env.VITE_USE_VOICE_LIVE === "true";
+
     return (
         <div className="flex min-h-screen flex-col bg-gray-100 text-gray-900">
             <div className="p-4 sm:absolute sm:left-4 sm:top-4">
                 <img src={logo} alt="Azure logo" className="h-16 w-16" />
+                <div className="mt-2 inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800">
+                    {useVoiceLive ? "Voice Live API" : "OpenAI Realtime API"}
+                </div>
             </div>
             <main className="flex flex-grow flex-col items-center justify-center">
                 <h1 className="mb-8 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-4xl font-bold text-transparent md:text-7xl">
