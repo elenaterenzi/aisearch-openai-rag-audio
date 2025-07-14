@@ -2,7 +2,7 @@
 FROM node:20-slim AS build-stage
 
 # Set the working directory inside the container
-COPY frontend ./
+COPY frontend /frontend
 
 WORKDIR /frontend
 RUN npm install
