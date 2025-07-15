@@ -2,10 +2,15 @@
 FROM node:20-slim AS build-stage
 
 # Set the working directory inside the container
-COPY frontend ./
+COPY frontend /frontend
 
 WORKDIR /frontend
 RUN npm install
+
+# Pass environment variable to the frontend build
+ARG USE_VOICE_LIVE
+ENV VITE_USE_VOICE_LIVE=$USE_VOICE_LIVE
+
 RUN npm run build
 
 # Stage 2: Serve the built app with a static file server

@@ -10,6 +10,8 @@ services:
     host: containerapp
     docker:
       remoteBuild: true
+      buildArgs:
+        - USE_VOICE_LIVE={{.Env.USE_VOICE_LIVE}}
 hooks:
     postprovision:
       windows:
