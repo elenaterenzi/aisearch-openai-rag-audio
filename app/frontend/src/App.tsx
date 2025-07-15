@@ -76,14 +76,14 @@ function App() {
     const { t } = useTranslation();
 
     // Get the API type from environment variable
-    const useVoiceLive = import.meta.env.VITE_USE_VOICE_LIVE === "true";
+    // const useVoiceLive = import.meta.env.VITE_USE_VOICE_LIVE === "true";
 
     return (
         <div className="flex min-h-screen flex-col bg-gray-100 text-gray-900">
             <div className="p-4 sm:absolute sm:left-4 sm:top-4">
                 <img src={logo} alt="Azure logo" className="h-16 w-16" />
                 <div className="mt-2 inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800">
-                    "Voice Live API"
+                    Voice Live API
                 </div>
             </div>
             <main className="flex flex-grow flex-col items-center justify-center">
