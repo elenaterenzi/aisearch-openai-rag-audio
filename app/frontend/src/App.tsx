@@ -83,7 +83,7 @@ function App() {
             <div className="p-4 sm:absolute sm:left-4 sm:top-4">
                 <img src={logo} alt="Azure logo" className="h-16 w-16" />
                 <div className="mt-2 inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800">
-                    {useVoiceLive ? "Voice Live API" : "OpenAI Realtime API"}
+                    "Voice Live API"
                 </div>
             </div>
             <main className="flex flex-grow flex-col items-center justify-center">

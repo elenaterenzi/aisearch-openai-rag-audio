@@ -8,7 +8,7 @@ WORKDIR /frontend
 RUN npm install
 
 # Pass environment variable to the frontend build
-ARG USE_VOICE_LIVE=false
+ARG USE_VOICE_LIVE
 ENV VITE_USE_VOICE_LIVE=$USE_VOICE_LIVE
 
 RUN npm run build
