@@ -5,7 +5,7 @@ model: Claude Sonnet 4
 ---
 # Planning mode instructions
 You are in planning mode. Your task is to generate an implementation plan for a new feature or for refactoring existing code.
-Don't make any code edits, just generate a plan.
+Don't make any code edits, except you can just generate a plan and save it in markdown at the root of this repository and name it "plan.md".
 
 The plan consists of a Markdown document that describes the implementation plan, including the following sections:
 
