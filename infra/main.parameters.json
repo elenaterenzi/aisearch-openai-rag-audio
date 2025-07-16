@@ -115,6 +115,27 @@
     },
     "azureContainerAppsWorkloadProfile": {
       "value": "${AZURE_CONTAINER_APPS_WORKLOAD_PROFILE=Consumption}"
+    },
+    "useVoiceLive": {
+      "value": "${USE_VOICE_LIVE=false}"
+    },
+    "reuseExistingAiFoundry": {
+      "value": "${AZURE_AI_FOUNDRY_REUSE_EXISTING=false}"
+    },
+    "aiFoundryServiceName": {
+      "value": "${AZURE_AI_FOUNDRY_SERVICE}"
+    },
+    "aiFoundryResourceGroupName": {
+      "value": "${AZURE_AI_FOUNDRY_RESOURCE_GROUP}"
+    },
+    "azureAiFoundryEndpoint": {
+      "value": "${AZURE_AI_FOUNDRY_ENDPOINT}"
+    },
+    "azureAiFoundryApiKey": {
+      "value": "${AZURE_AI_FOUNDRY_API_KEY}"
+    },
+    "voiceLiveVoice": {
+      "value": "${VOICE_LIVE_VOICE=en-US-AvaMultilingualNeural}"
     }
   }
 }

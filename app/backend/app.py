@@ -18,6 +18,9 @@ async def create_app():
         logger.info("Running in development mode, loading from .env file")
         load_dotenv()
 
+    # Check feature flag to determine which API to use
+    use_voice_live = os.environ.get("USE_VOICE_LIVE", "false").lower() == "true"
+
     llm_key = os.environ.get("AZURE_OPENAI_API_KEY")
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
 
@@ -34,11 +37,25 @@ async def create_app():
     
     app = web.Application()
 
-    rtmt = RTMiddleTier(
-        credentials=llm_credential,
-        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        deployment=os.environ["AZURE_OPENAI_REALTIME_DEPLOYMENT"],
-        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy"
+    # Create RTMiddleTier with appropriate configuration based on feature flag
+    if use_voice_live:
+        logger.info("Using Voice Live API")
+        rtmt = RTMiddleTier(
+            credentials=llm_credential,
+            endpoint="",  # Not used for Voice Live
+            deployment="",  # Not used for Voice Live
+            use_voice_live=True,
+            ai_foundry_endpoint=os.environ["AZURE_AI_FOUNDRY_ENDPOINT"],
+            ai_foundry_key=os.environ["AZURE_AI_FOUNDRY_API_KEY"],
+            voice_live_voice=os.environ.get("VOICE_LIVE_VOICE")
+        )
+    else:
+        logger.info("Using OpenAI Realtime API")
+        rtmt = RTMiddleTier(
+            credentials=llm_credential,
+            endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            deployment=os.environ["AZURE_OPENAI_REALTIME_DEPLOYMENT"],
+            voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy"
         )
     rtmt.system_message = """
         You are a helpful assistant. Only answer questions based on information you searched in the knowledge base, accessible with the 'search' tool. 

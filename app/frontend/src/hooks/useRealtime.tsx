@@ -55,10 +55,28 @@ export default function useRealTime({
         ? `${aoaiEndpointOverride}/openai/realtime?api-key=${aoaiApiKeyOverride}&deployment=${aoaiModelOverride}&api-version=2024-10-01-preview`
         : `/realtime`;
 
+    // Log which API is being used
+    console.log(
+        useDirectAoaiApi ? "🔗 Connecting directly to OpenAI Realtime API" : "🔗 Connecting to backend (Voice Live or OpenAI Realtime via middle tier)"
+    );
+
     const { sendJsonMessage } = useWebSocket(wsEndpoint, {
-        onOpen: () => onWebSocketOpen?.(),
-        onClose: () => onWebSocketClose?.(),
-        onError: event => onWebSocketError?.(event),
+        onOpen: () => {
+            console.log(
+                useDirectAoaiApi
+                    ? "✅ Connected to OpenAI Realtime API directly"
+                    : "✅ Connected to backend - API type will be determined by USE_VOICE_LIVE flag"
+            );
+            onWebSocketOpen?.();
+        },
+        onClose: () => {
+            console.log("❌ WebSocket connection closed");
+            onWebSocketClose?.();
+        },
+        onError: event => {
+            console.error("🚫 WebSocket error:", event);
+            onWebSocketError?.(event);
+        },
         onMessage: event => onMessageReceived(event),
         shouldReconnect: () => true
     });
@@ -110,6 +128,11 @@ export default function useRealTime({
             throw e;
         }
 
+        // Log first message to help identify which API backend is being used
+        if (message.type === "session.created") {
+            console.log("🎯 Session created - connected to backend API");
+        }
+
         switch (message.type) {
             case "response.done":
                 onReceivedResponseDone?.(message as ResponseDone);
@@ -130,6 +153,7 @@ export default function useRealTime({
                 onReceivedExtensionMiddleTierToolResponse?.(message as ExtensionMiddleTierToolResponse);
                 break;
             case "error":
+                console.error("🚫 Received error from backend:", message);
                 onReceivedError?.(message);
                 break;
         }

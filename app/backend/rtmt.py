@@ -49,6 +49,12 @@ class RTMiddleTier:
     deployment: str
     key: Optional[str] = None
     
+    # Voice Live specific properties
+    use_voice_live: bool = False
+    ai_foundry_endpoint: Optional[str] = None
+    ai_foundry_key: Optional[str] = None
+    voice_live_voice: Optional[str] = None
+    
     # Tools are server-side only for now, though the case could be made for client-side tools
     # in addition to server-side tools that are invisible to the client
     tools: dict[str, Tool] = {}
@@ -65,17 +71,30 @@ class RTMiddleTier:
     _tools_pending = {}
     _token_provider = None
 
-    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: Optional[str] = None):
+    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, 
+                 voice_choice: Optional[str] = None, use_voice_live: bool = False, 
+                 ai_foundry_endpoint: Optional[str] = None, ai_foundry_key: Optional[str] = None,
+                 voice_live_voice: Optional[str] = None):
         self.endpoint = endpoint
         self.deployment = deployment
         self.voice_choice = voice_choice
-        if voice_choice is not None:
-            logger.info("Realtime voice choice set to %s", voice_choice)
-        if isinstance(credentials, AzureKeyCredential):
-            self.key = credentials.key
+        self.use_voice_live = use_voice_live
+        
+        if self.use_voice_live:
+            # Voice Live configuration
+            self.ai_foundry_endpoint = ai_foundry_endpoint
+            self.ai_foundry_key = ai_foundry_key
+            self.voice_live_voice = voice_live_voice
+            logger.info("Voice Live API enabled with voice: %s", self.voice_live_voice)
         else:
-            self._token_provider = get_bearer_token_provider(credentials, "https://cognitiveservices.azure.com/.default")
-            self._token_provider() # Warm up during startup so we have a token cached when the first request arrives
+            # Original OpenAI Realtime configuration
+            if voice_choice is not None:
+                logger.info("Realtime voice choice set to %s", voice_choice)
+            if isinstance(credentials, AzureKeyCredential):
+                self.key = credentials.key
+            else:
+                self._token_provider = get_bearer_token_provider(credentials, "https://cognitiveservices.azure.com/.default")
+                self._token_provider() # Warm up during startup so we have a token cached when the first request arrives
 
     async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse) -> Optional[str]:
         message = json.loads(msg.data)
@@ -179,6 +198,142 @@ class RTMiddleTier:
         return updated_message
 
     async def _forward_messages(self, ws: web.WebSocketResponse):
+        if self.use_voice_live:
+            await self._forward_messages_voice_live(ws)
+        else:
+            await self._forward_messages_openai_realtime(ws)
+    
+    async def _forward_messages_voice_live(self, client_ws: web.WebSocketResponse):
+        """Handle Voice Live API communication with turn detection and noise cancellation"""
+        headers = {"api-key": self.ai_foundry_key}
+        
+        # Voice Live configuration with advanced features
+        config = {
+            "conversation": {
+                "turn_detection": {"enabled": True, "timeout_ms": 2000},
+                "noise_suppression": {"enabled": True},
+                "echo_cancellation": {"enabled": True}
+            },
+            "voice": self.voice_live_voice or "default",
+            "system_message": self.system_message or "You are a helpful assistant.",
+            "tools": [tool.schema for tool in self.tools.values()] if self.tools else []
+        }
+        
+        # Construct the Voice Live WebSocket URL
+        voice_live_ws_url = f"{self.ai_foundry_endpoint.rstrip('/')}/voice-live/realtime?api-version=2025-05-01-preview"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(voice_live_ws_url, headers=headers) as voice_ws:
+                # Send initial configuration
+                await voice_ws.send_str(json.dumps({"type": "configuration", "config": config}))
+                
+                async def from_client_to_voice_live():
+                    async for msg in client_ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = json.loads(msg.data)
+                            
+                            # Handle audio input
+                            if data.get("type") == "input_audio_buffer.append":
+                                await voice_ws.send_str(json.dumps({
+                                    "type": "audio_input",
+                                    "audio": data["audio"]
+                                }))
+                            elif data.get("type") == "session.update":
+                                # Handle session updates for Voice Live
+                                await voice_ws.send_str(json.dumps({
+                                    "type": "session_update",
+                                    "session": data.get("session", {})
+                                }))
+                        else:
+                            print("Error: unexpected message type:", msg.type)
+                
+                async def from_voice_live_to_client():
+                    async for msg in voice_ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = json.loads(msg.data)
+                            
+                            if data.get("type") == "audio_output":
+                                # Forward audio to client in OpenAI format for compatibility
+                                await client_ws.send_str(json.dumps({
+                                    "type": "response.audio.delta",
+                                    "delta": data["audio"]
+                                }))
+                            elif data.get("type") == "text_response":
+                                # Handle text responses with RAG
+                                text = data.get("text", "")
+                                if text and self.tools:
+                                    # Process through RAG tools if available
+                                    await self._process_voice_live_rag(text, client_ws, voice_ws)
+                            elif data.get("type") == "function_call":
+                                # Handle function calls from Voice Live
+                                await self._process_voice_live_function_call(data, client_ws, voice_ws)
+                        else:
+                            print("Error: unexpected message type:", msg.type)
+                
+                try:
+                    await asyncio.gather(from_client_to_voice_live(), from_voice_live_to_client())
+                except ConnectionResetError:
+                    pass
+
+    async def _process_voice_live_rag(self, user_text: str, client_ws: web.WebSocketResponse, voice_ws: web.WebSocketResponse):
+        """Process user query through RAG using existing tools"""
+        try:
+            # Use existing search tool
+            search_tool = self.tools.get("search")
+            if search_tool:
+                search_result = await search_tool.target({"query": user_text})
+                
+                # Send RAG context back to Voice Live for response generation
+                await voice_ws.send_str(json.dumps({
+                    "type": "context_update",
+                    "context": search_result.to_text(),
+                    "query": user_text
+                }))
+                
+                # Report grounding to client
+                grounding_tool = self.tools.get("report_grounding")
+                if grounding_tool and search_result.text:
+                    grounding_result = await grounding_tool.target({"sources": []})  # Would need to parse sources
+                    if grounding_result.destination == ToolResultDirection.TO_CLIENT:
+                        await client_ws.send_str(json.dumps({
+                            "type": "extension.middle_tier_tool_response",
+                            "tool_name": "report_grounding",
+                            "tool_result": grounding_result.to_text()
+                        }))
+                        
+        except Exception as e:
+            logger.error("Error processing Voice Live RAG query: %s", e)
+
+    async def _process_voice_live_function_call(self, data: dict, client_ws: web.WebSocketResponse, voice_ws: web.WebSocketResponse):
+        """Handle function calls from Voice Live"""
+        try:
+            function_name = data.get("name")
+            arguments = data.get("arguments", {})
+            call_id = data.get("call_id")
+            
+            if function_name in self.tools:
+                tool = self.tools[function_name]
+                result = await tool.target(arguments)
+                
+                # Send result back to Voice Live
+                await voice_ws.send_str(json.dumps({
+                    "type": "function_result",
+                    "call_id": call_id,
+                    "result": result.to_text()
+                }))
+                
+                # Send to client if needed
+                if result.destination == ToolResultDirection.TO_CLIENT:
+                    await client_ws.send_str(json.dumps({
+                        "type": "extension.middle_tier_tool_response",
+                        "tool_name": function_name,
+                        "tool_result": result.to_text()
+                    }))
+                    
+        except Exception as e:
+            logger.error("Error processing Voice Live function call: %s", e)
+
+    async def _forward_messages_openai_realtime(self, ws: web.WebSocketResponse):
         async with aiohttp.ClientSession(base_url=self.endpoint) as session:
             params = { "api-version": self.api_version, "deployment": self.deployment}
             headers = {}

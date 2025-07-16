@@ -76,6 +76,29 @@ param openAiEndpoint string = ''
 param openAiRealtimeDeployment string = ''
 param openAiRealtimeVoiceChoice string = ''
 
+// Voice Live API parameters
+@description('Whether to use Voice Live API instead of OpenAI Realtime API')
+param useVoiceLive bool = false
+
+@description('Whether to reuse existing AI Foundry service')
+param reuseExistingAiFoundry bool = false
+
+@description('Azure AI Foundry service name')
+param aiFoundryServiceName string = ''
+
+@description('Azure AI Foundry resource group name')
+param aiFoundryResourceGroupName string = ''
+
+@description('Azure AI Foundry endpoint for Voice Live API (when reusing existing)')
+param azureAiFoundryEndpoint string = ''
+
+@description('Azure AI Foundry API key for Voice Live API (when reusing existing)')
+@secure()
+param azureAiFoundryApiKey string = ''
+
+@description('Voice Live voice selection')
+param voiceLiveVoice string = 'en-US-AvaMultilingualNeural'
+
 @description('Location for the OpenAI resource group')
 @allowed([
   'eastus2'
@@ -128,18 +151,6 @@ resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
   name: !empty(resourceGroupName) ? resourceGroupName : '${abbrs.resourcesResourceGroups}${environmentName}'
   location: location
   tags: tags
-}
-
-resource openAiResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(openAiResourceGroupName)) {
-  name: !empty(openAiResourceGroupName) ? openAiResourceGroupName : resourceGroup.name
-}
-
-resource searchServiceResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(searchServiceResourceGroupName)) {
-  name: !empty(searchServiceResourceGroupName) ? searchServiceResourceGroupName : resourceGroup.name
-}
-
-resource storageResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(storageResourceGroupName)) {
-  name: !empty(storageResourceGroupName) ? storageResourceGroupName : resourceGroup.name
 }
 
 module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.7.0' = {
@@ -219,6 +230,15 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       AZURE_OPENAI_ENDPOINT: reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : openAiDeployments[0].name
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Voice Live API configuration
+      USE_VOICE_LIVE: string(useVoiceLive)
+      AZURE_AI_FOUNDRY_ENDPOINT: useVoiceLive && !reuseExistingAiFoundry 
+        ? aiFoundry.outputs.endpoint
+        : azureAiFoundryEndpoint
+      AZURE_AI_FOUNDRY_API_KEY: useVoiceLive && !reuseExistingAiFoundry 
+        ? aiFoundry.outputs.apiKey
+        : azureAiFoundryApiKey
+      VOICE_LIVE_VOICE: voiceLiveVoice
       // CORS support, for frontends on other hosts
       RUNNING_IN_PRODUCTION: 'true'
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
@@ -255,9 +275,13 @@ var openAiDeployments = [
   }
 ]
 
+// Note: For Voice Live API, no additional Azure resources need to be provisioned
+// The AI Foundry endpoint and API key are external and provided via parameters
+// This conditional deployment allows the same infrastructure to support both APIs
+
 module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseExistingOpenAi) {
   name: 'openai'
-  scope: openAiResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(openAiServiceName) ? openAiServiceName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
     location: openAiServiceLocation
@@ -281,9 +305,22 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseE
   }
 }
 
+// Azure AI Foundry service for Voice Live API
+module aiFoundry './core/aifoundry.bicep' = if (!reuseExistingAiFoundry && useVoiceLive) {
+  name: 'aifoundry'
+  scope: resourceGroup
+  params: {
+    aiFoundryServiceName: !empty(aiFoundryServiceName) ? aiFoundryServiceName : '${abbrs.cognitiveServicesAccounts}foundry-${resourceToken}'
+    location: location
+    tags: tags
+    principalId: principalId
+    principalType: principalType
+  }
+}
+
 module searchService 'br/public:avm/res/search/search-service:0.7.1' = if (!reuseExistingSearch) {
   name: 'search-service'
-  scope: searchServiceResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(searchServiceName) ? searchServiceName : 'gptkb-${resourceToken}'
     location: !empty(searchServiceLocation) ? searchServiceLocation : location
@@ -317,7 +354,7 @@ module searchService 'br/public:avm/res/search/search-service:0.7.1' = if (!reus
 
 module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
   name: 'storage'
-  scope: storageResourceGroup
+  scope: resourceGroup
   params: {
     name: !empty(storageAccountName) ? storageAccountName : '${abbrs.storageStorageAccounts}${resourceToken}'
     location: storageResourceGroupLocation
@@ -359,7 +396,7 @@ module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
 
 // Roles for the backend to access other services
 module openAiRoleBackend 'core/security/role.bicep' = {
-  scope: openAiResourceGroup
+  scope: resourceGroup
   name: 'openai-role-backend'
   params: {
     principalId: acaBackend.outputs.identityPrincipalId
@@ -371,7 +408,7 @@ module openAiRoleBackend 'core/security/role.bicep' = {
 // Used to issue search queries
 // https://learn.microsoft.com/azure/search/search-security-rbac
 module searchRoleBackend 'core/security/role.bicep' = {
-  scope: searchServiceResourceGroup
+  scope: resourceGroup
   name: 'search-role-backend'
   params: {
     principalId: acaBackend.outputs.identityPrincipalId
@@ -382,7 +419,7 @@ module searchRoleBackend 'core/security/role.bicep' = {
 
 // Necessary for integrated vectorization, for search service to access storage
 module storageRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
-  scope: storageResourceGroup
+  scope: resourceGroup
   name: 'storage-role-searchservice'
   params: {
     principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
@@ -393,7 +430,7 @@ module storageRoleSearchService 'core/security/role.bicep' = if (!reuseExistingS
 
 // Necessary for integrated vectorization, for search service to access OpenAI embeddings
 module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
-  scope: openAiResourceGroup
+  scope: resourceGroup
   name: 'openai-role-searchservice'
   params: {
     principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
@@ -427,9 +464,16 @@ output AZURE_SEARCH_USE_VECTOR_QUERY bool = searchUseVectorQuery
 
 output AZURE_STORAGE_ENDPOINT string = 'https://${storage.outputs.name}.blob.core.windows.net'
 output AZURE_STORAGE_ACCOUNT string = storage.outputs.name
-output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${subscription().subscriptionId}/resourceGroups/${storageResourceGroup.name}/providers/Microsoft.Storage/storageAccounts/${storage.outputs.name}'
+output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup.name}/providers/Microsoft.Storage/storageAccounts/${storage.outputs.name}'
 output AZURE_STORAGE_CONTAINER string = storageContainerName
-output AZURE_STORAGE_RESOURCE_GROUP string = storageResourceGroup.name
+output AZURE_STORAGE_RESOURCE_GROUP string = resourceGroup.name
 
 output BACKEND_URI string = acaBackend.outputs.uri
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerApps.outputs.registryLoginServer
+
+// Voice Live API outputs
+output USE_VOICE_LIVE bool = useVoiceLive
+output AZURE_AI_FOUNDRY_ENDPOINT string = useVoiceLive && !reuseExistingAiFoundry 
+  ? aiFoundry.outputs.endpoint
+  : azureAiFoundryEndpoint
+output VOICE_LIVE_VOICE string = voiceLiveVoice

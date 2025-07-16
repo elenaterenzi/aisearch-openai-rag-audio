@@ -18,6 +18,12 @@ $azureSearchContentField = azd env get-value AZURE_SEARCH_CONTENT_FIELD
 $azureSearchEmbeddingField = azd env get-value AZURE_SEARCH_EMBEDDING_FIELD
 $azureSearchUseVectorQuery = azd env get-value AZURE_SEARCH_USE_VECTOR_QUERY
 
+# Voice Live API environment variables
+$useVoiceLive = azd env get-value USE_VOICE_LIVE
+$azureAiFoundryEndpoint = azd env get-value AZURE_AI_FOUNDRY_ENDPOINT
+$azureAiFoundryApiKey = azd env get-value AZURE_AI_FOUNDRY_API_KEY
+$voiceLiveVoice = azd env get-value VOICE_LIVE_VOICE
+
 Add-Content -Path $envFilePath -Value "AZURE_OPENAI_ENDPOINT=$azureOpenAiEndpoint"
 Add-Content -Path $envFilePath -Value "AZURE_OPENAI_REALTIME_DEPLOYMENT=$azureOpenAiRealtimeDeployment"
 Add-Content -Path $envFilePath -Value "AZURE_OPENAI_REALTIME_VOICE_CHOICE=$azureOpenAiRealtimeVoiceChoice"
@@ -30,3 +36,14 @@ Add-Content -Path $envFilePath -Value "AZURE_SEARCH_CONTENT_FIELD=$azureSearchCo
 Add-Content -Path $envFilePath -Value "AZURE_SEARCH_EMBEDDING_FIELD=$azureSearchEmbeddingField"
 Add-Content -Path $envFilePath -Value "AZURE_SEARCH_USE_VECTOR_QUERY=$azureSearchUseVectorQuery"
 Add-Content -Path $envFilePath -Value "AZURE_TENANT_ID=$azureTenantId"
+
+# Add Voice Live configuration when enabled
+if ($useVoiceLive -eq "true") {
+    Add-Content -Path $envFilePath -Value "USE_VOICE_LIVE=$useVoiceLive"
+    Add-Content -Path $envFilePath -Value "AZURE_AI_FOUNDRY_ENDPOINT=$azureAiFoundryEndpoint"
+    Add-Content -Path $envFilePath -Value "AZURE_AI_FOUNDRY_API_KEY=$azureAiFoundryApiKey"
+    Add-Content -Path $envFilePath -Value "VOICE_LIVE_VOICE=$voiceLiveVoice"
+} else {
+    # Add USE_VOICE_LIVE=false for clarity even when not using Voice Live
+    Add-Content -Path $envFilePath -Value "USE_VOICE_LIVE=false"
+}
