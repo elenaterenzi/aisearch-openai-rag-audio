@@ -253,6 +253,8 @@ class RTMiddleTier:
                     session["tools"] = [tool.schema for tool in self.tools.values()]
                     updated_message = json.dumps(message)
 
+                    logger.info(f"Tools in session: tool choice is {session['tool_choice']} and there are {len(self.tools)} tools available")
+
         return updated_message
 
     async def _forward_messages(self, ws: web.WebSocketResponse):
