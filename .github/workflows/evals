@@ -1,0 +1,24 @@
+name: AI Evaluation Demo
+on:
+  workflow_dispatch:
+jobs:
+  run-evals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install Azure AI Evaluation SDK
+        run: pip install azure-ai-evaluation
+      - name: Run Evaluations
+        run: |
+          python - <<'EOF'
+          from azure.ai.evaluation import EvaluationClient
+          client = EvaluationClient()
+          dataset = [{"input": "What is hypertension?", "expected": "High blood pressure"}]
+          result = client.evaluate(dataset, metrics=["relevance", "groundedness"])
+          print("Evaluation Results:", result)
+          EOF
